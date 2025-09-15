@@ -45,7 +45,7 @@
         <div>
           <label>검색 위치</label>
           <input id="location" value="서울" />
-          <div class="hint">가까운 도시명으로 검색 반경을 넓힐 수 있어요. (예: 서울, 강남구, 여의도)</div>
+          <div class="hint">예: 서울, 강남구, 여의도</div>
         </div>
       </div>
       <div class="row">
@@ -65,16 +65,18 @@
       <div id="error" class="err" style="display:none;"></div>
       <div id="results" class="results" aria-live="polite"></div>
       <div class="footer">
-        데이터 출처: 애플 공식 Fulfillment API(웹 스토어). CORS 정책에 따라 브라우저에서 차단될 수 있습니다. 이 경우 같은 코드를
-        로컬/사내 프록시를 통해 호출하세요. 예: <code>/proxy?url=...</code> 형태.
+        GitHub Pages는 정적 호스팅이라 브라우저에서 CORS로 막힙니다. 아래 <b>PROXY_BASE</b>에 배포한 프록시 주소를 넣어 사용하세요.
       </div>
     </div>
   </div>
 
   <script>
-    // 매칭할 매장명 키워드 (한국어 로컬 네이밍 기준)
-    const TARGET_STORES = ["Apple 강남", "Apple 여의도"];
+    // ✅ 여기를 당신의 프록시 주소로 바꾸세요.
+    // Cloudflare Workers: "https://<your-subdomain>.workers.dev"
+    // Netlify 함수: "https://<site>.netlify.app/.netlify/functions/proxy"
+    const PROXY_BASE = "https://your-subdomain.workers.dev";
 
+    const TARGET_STORES = ["Apple 강남", "Apple 여의도"];
     const $ = (sel) => document.querySelector(sel);
     const resultsEl = $("#results");
     const errEl = $("#error");
@@ -88,7 +90,6 @@
     }
 
     function normalizeStatus(pa) {
-      // pa.pickupDisplay: e.g., "available", "unavailable", "ineligible", "shipToStore", etc.
       const d = (pa?.pickupDisplay || "").toLowerCase();
       if (d.includes("available")) return { key:"ok", label:"픽업 가능" };
       if (d.includes("unavailable")) return { key:"bad", label:"품절" };
@@ -117,44 +118,38 @@
 
       try {
         const url = new URL("/shop/fulfillment-messages", domain);
-        // 파라미터 구성
         url.searchParams.set("pl", "true");
         url.searchParams.set("searchNearby", "true");
-        url.searchParams.set("mts.0", "regular"); // 일반 픽업
+        url.searchParams.set("mts.0", "regular");
         url.searchParams.set("location", loc);
         url.searchParams.set("parts.0", sku);
 
-const appleURL = url.toString();
-const proxyURL =
-  PROXY_BASE.includes("workers.dev")
-    ? `${PROXY_BASE}/?url=` + encodeURIComponent(appleURL)                // Cloudflare Workers
-    : `${PROXY_BASE}?url=` + encodeURIComponent(appleURL);               // Netlify/Vercel 등
+        // ✅ 프록시 경유로 우회 (CORS 회피)
+        const appleURL = url.toString();
+        const proxyURL =
+          PROXY_BASE.includes("workers.dev")
+            ? `${PROXY_BASE}/?url=` + encodeURIComponent(appleURL)   // Cloudflare Workers
+            : `${PROXY_BASE}?url=` + encodeURIComponent(appleURL);   // Netlify/Vercel 등
 
-const res = await fetch(proxyURL, { method: "GET" }); // 헤더 불필요
-
+        const res = await fetch(proxyURL, { method: "GET" });
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
           throw new Error(`요청 실패 (${res.status}).\n${txt || ""}`);
         }
-
         const data = await res.json();
 
-        // 경로 안전 접근
         const stores = data?.body?.content?.pickupMessage?.stores || [];
         if (!stores.length) {
           resultsEl.innerHTML = `<div class="small">해당 SKU 또는 위치로 조회된 매장이 없습니다.</div>`;
           return;
         }
 
-        // 강남/여의도만 필터
         const target = stores.filter(s => TARGET_STORES.some(k => (s.storeName || "").includes(k)));
-
         if (!target.length) {
-          resultsEl.innerHTML = `<div class="small">강남/여의도 매장이 목록에 없거나 검색 반경에 포함되지 않았습니다. 위치를 "서울" 또는 "강남구/여의도" 등으로 바꿔보세요.</div>`;
+          resultsEl.innerHTML = `<div class="small">강남/여의도 매장이 검색 반경에 없어요. 위치를 "서울" 등으로 바꿔 보세요.</div>`;
           return;
         }
 
-        // 각 매장 렌더
         target.forEach(store => {
           const wrap = document.createElement("div");
           wrap.className = "store";
@@ -162,11 +157,9 @@ const res = await fetch(proxyURL, { method: "GET" }); // 헤더 불필요
           const left = document.createElement("div");
           const name = document.createElement("h3");
           name.textContent = store.storeName || "매장명 미확인";
-
           const addr = document.createElement("div");
           addr.className = "addr";
           addr.textContent = store.address?.address || store.address?.address1 || "";
-
           left.appendChild(name);
           left.appendChild(addr);
 
@@ -174,11 +167,10 @@ const res = await fetch(proxyURL, { method: "GET" }); // 헤더 불필요
           const pa = store.partsAvailability?.[sku];
           const st = normalizeStatus(pa);
           right.appendChild(badge(st.key, st.label));
-
           if (pa?.pickupSearchQuote) {
             const quote = document.createElement("div");
             quote.className = "small";
-            quote.textContent = pa.pickupSearchQuote; // 예: “오늘 픽업 가능”, “현재 이용 불가” 등
+            quote.textContent = pa.pickupSearchQuote;
             right.appendChild(quote);
           }
 
@@ -196,12 +188,9 @@ const res = await fetch(proxyURL, { method: "GET" }); // 헤더 불필요
       }
     }
 
-    btn.addEventListener("click", checkStock);
-
-    // Enter 키로 실행
+    document.getElementById("checkBtn").addEventListener("click", checkStock);
     ["sku","location"].forEach(id=>{
-      const el = document.getElementById(id);
-      el.addEventListener("keydown", (ev)=>{
+      document.getElementById(id).addEventListener("keydown", (ev)=>{
         if (ev.key === "Enter") checkStock();
       });
     });
