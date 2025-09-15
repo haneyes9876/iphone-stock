@@ -124,11 +124,13 @@
         url.searchParams.set("location", loc);
         url.searchParams.set("parts.0", sku);
 
-        const res = await fetch(url.toString(), {
-          method: "GET",
-          headers: { "Accept": "application/json" },
-          // 일부 환경에서 CORS 차단될 수 있음
-        });
+const appleURL = url.toString();
+const proxyURL =
+  PROXY_BASE.includes("workers.dev")
+    ? `${PROXY_BASE}/?url=` + encodeURIComponent(appleURL)                // Cloudflare Workers
+    : `${PROXY_BASE}?url=` + encodeURIComponent(appleURL);               // Netlify/Vercel 등
+
+const res = await fetch(proxyURL, { method: "GET" }); // 헤더 불필요
 
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
